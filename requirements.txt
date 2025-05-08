@@ -1,0 +1,8 @@
+Flask
+Flask-SocketIO
+eventlet
+openai-whisper
+transformers
+torch
+gtts
+sentencepiece

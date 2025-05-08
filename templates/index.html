@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Translation App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+    <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-md">
+        <h1 class="text-2xl font-bold mb-4 text-center">Voice Translation App</h1>
+
+        <!-- Join Call Form -->
+        <div id="join-form" class="mb-4">
+            <label class="block mb-2">Call ID</label>
+            <input type="text" id="call-id" class="w-full p-2 border rounded mb-2" placeholder="Enter call ID">
+            <label class="block mb-2">Spoken Language</label>
+            <select id="spoken-lang" class="w-full p-2 border rounded mb-2">
+                <option value="en">English</option>
+                <option value="fr">French</option>
+                <option value="es">Spanish</option>
+                <!-- Add more languages as supported by your backend -->
+            </select>
+            <label class="block mb-2">Listening Language</label>
+            <select id="listen-lang" class="w-full p-2 border rounded mb-2">
+                <option value="fr">French</option>
+                <option value="en">English</option>
+                <option value="es">Spanish</option>
+                <!-- Add more languages as supported by your backend -->
+            </select>
+            <button id="join-btn" class="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600">Join Call</button>
+        </div>
+
+        <!-- Recording Controls -->
+        <div id="recording-controls" class="hidden mb-4">
+            <button id="record-btn" class="w-full bg-green-500 text-white p-2 rounded hover:bg-green-600">Start Recording</button>
+            <button id="stop-btn" class="w-full bg-red-500 text-white p-2 rounded hover:bg-red-600 hidden">Stop Recording</button>
+        </div>
+
+        <!-- Transcription Display -->
+        <div id="transcription" class="mb-4">
+            <h2 class="text-lg font-semibold">Original Text</h2>
+            <p id="original-text" class="p-2 bg-gray-100 rounded"></p>
+            <h2 class="text-lg font-semibold mt-2">Translated Text</h2>
+            <p id="translated-text" class="p-2 bg-gray-100 rounded"></p>
+        </div>
+
+        <!-- Audio File Upload Form -->
+        <div id="upload-form" class="mb-4">
+            <h2 class="text-lg font-semibold">Test Audio File Translation</h2>
+            <input type="file" id="audio-file" accept="audio/wav" class="mb-2">
+            <label class="block mb-2">Spoken Language</label>
+            <select id="upload-spoken-lang" class="w-full p-2 border rounded mb-2">
+                <option value="en">English</option>
+                <option value="fr">French</option>
+                <option value="es">Spanish</option>
+            </select>
+            <label class="block mb-2">Listening Language</label>
+            <select id="upload-listen-lang" class="wப்பட்ட
+
+System: full max-w-md">
+                <option value="fr">French</option>
+                <option value="en">English</option>
+                <option value="es">Spanish</option>
+            </select>
+            <button id="upload-btn" class="w-full bg-purple-500 text-white p-2 rounded hover:bg-purple-600">Translate Audio File</button>
+        </div>
+
+        <!-- Status Messages -->
+        <div id="status" class="text-center text-red-500"></div>
+    </div>
+
+    <script>
+        const socket = io('http://172.16.11.159:5000');
+        let mediaRecorder = null;
+        let audioContext = null;
+        let source = null;
+        let stream = null;
+
+        // Language codes to names for display
+        const langNames = {
+            'en': 'English',
+            'fr': 'French',
+            'es': 'Spanish'
+            // Add more as needed
+        };
+
+        // Socket.IO event handlers
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            setStatus('Connected to server', 'text-green-500');
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+            setStatus('Disconnected from server', 'text-red-500');
+            toggleRecordingControls(false);
+        });
+
+        socket.on('joined', (data) => {
+            console.log(`Joined call ${data.call_id} as ${data.sid}`);
+            setStatus(`Joined call ${data.call_id}`, 'text-green-500');
+            document.getElementById('join-form').classList.add('hidden');
+            toggleRecordingControls(true);
+        });
+
+        socket.on('translated_audio', (data) => {
+            const { chunk, original_text, translated_text } = data;
+            console.log('Received translated audio:', { original_text, translated_text });
+            document.getElementById('original-text').textContent = original_text;
+            document.getElementById('translated-text').textContent = translated_text;
+            playAudio(chunk);
+        });
+
+        socket.on('error', (data) => {
+            console.error('Server error:', data.message);
+            setStatus(`Error: ${data.message}`, 'text-red-500');
+        });
+
+        // Join call
+        document.getElementById('join-btn').addEventListener('click', () => {
+            const callId = document.getElementById('call-id').value.trim();
+            const spokenLang = document.getElementById('spoken-lang').value;
+            const listenLang = document.getElementById('listen-lang').value;
+
+            if (!callId) {
+                setStatus('Please enter a call ID', 'text-red-500');
+                return;
+            }
+
+            socket.emit('join_call', {
+                call_id: callId,
+                spoken: spokenLang,
+                listen: listenLang
+            });
+        });
+
+        // Recording controls
+        document.getElementById('record-btn').addEventListener('click', startRecording);
+        document.getElementById('stop-btn').addEventListener('click', stopRecording);
+
+        async function startRecording() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                source = audioContext.createMediaStreamSource(stream);
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+
+                mediaRecorder.ondataavailable = async (event) => {
+                    if (event.data.size > 0) {
+                        const arrayBuffer = await event.data.arrayBuffer();
+                        const audioData = new Uint8Array(arrayBuffer);
+                        // Convert to WAV for backend compatibility
+                        const wavBlob = await convertToWav(audioData);
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            const base64String = reader.result.split(',')[1];
+                            socket.emit('audio_chunk', { chunk: base64String });
+                        };
+                        reader.readAsDataURL(wavBlob);
+                    }
+                };
+
+                mediaRecorder.start(1000); // Send chunks every 1 second
+                document.getElementById('record-btn').classList.add('hidden');
+                document.getElementById('stop-btn').classList.remove('hidden');
+                setStatus('Recording...', 'text-blue-500');
+            } catch (err) {
+                console.error('Error starting recording:', err);
+                setStatus(`Error: ${err.message}`, 'text-red-500');
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+            if (source) {
+                source.disconnect();
+            }
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+            if (audioContext) {
+                audioContext.close();
+            }
+            document.getElementById('record-btn').classList.remove('hidden');
+            document.getElementById('stop-btn').classList.add('hidden');
+            setStatus('Stopped recording', 'text-blue-500');
+        }
+
+        // Convert WebM to WAV using FFmpeg.js (simplified, assumes FFmpeg is available in browser)
+        async function convertToWav(audioData) {
+            // For simplicity, assume backend handles WAV; in production, use a library like ffmpeg.wasm
+            return new Blob([audioData], { type: 'audio/wav' });
+        }
+
+        // Play received audio
+        function playAudio(base64Audio) {
+            const audio = new Audio(`data:audio/mp3;base64,${base64Audio}`);
+            audio.play().catch(err => {
+                console.error('Error playing audio:', err);
+                setStatus(`Error playing audio: ${err.message}`, 'text-red-500');
+            });
+        }
+
+        // Upload audio file for translation
+        document.getElementById('upload-btn').addEventListener('click', async () => {
+            const audioFile = document.getElementById('audio-file').files[0];
+            const spokenLang = document.getElementById('upload-spoken-lang').value;
+            const listenLang = document.getElementById('upload-listen-lang').value;
+
+            if (!audioFile) {
+                setStatus('Please select an audio file', 'text-red-500');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('audio', audioFile);
+            formData.append('spoken', spokenLang);
+            formData.append('listen', listenLang);
+
+            try {
+                const response = await fetch('/translate_audio_file', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                if (response.ok) {
+                    document.getElementById('original-text').textContent = result.original_text;
+                    document.getElementById('translated-text').textContent = result.translated_text;
+                    playAudio(result.translated_audio);
+                    setStatus('Audio translated successfully', 'text-green-500');
+                } else {
+                    setStatus(`Error: ${result.error}`, 'text-red-500');
+                }
+            } catch (err) {
+                console.error('Error uploading audio:', err);
+                setStatus(`Error: ${err.message}`, 'text-red-500');
+            }
+        });
+
+        // Utility functions
+        function setStatus(message, className) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `text-center ${className}`;
+        }
+
+        function toggleRecordingControls(show) {
+            const controls = document.getElementById('recording-controls');
+            controls.classList.toggle('hidden', !show);
+        }
+    </script>
+</body>
+</html>
