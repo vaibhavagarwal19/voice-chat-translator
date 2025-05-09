@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, render_template
-from flask_socketio import SocketIO, emit, join_room
+from flask_socketio import SocketIO, emit, join_room, leave_room
 from transcriber import transcribe_chunk
 from translator import load_translation_model, translate_text
 from tts import speak_text
@@ -21,10 +21,20 @@ logger = logging.getLogger(__name__)
 logger.debug("Logging initialized at DEBUG level for Flask-SocketIO server")
 
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
+# Change the SocketIO initialization to:
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",
+    logger=True,
+    engineio_logger=True,
+    transports=['polling'],  # Force polling transport
+    ping_timeout=20000,      # Adjust timeouts for polling
+    ping_interval=10000
+)
 
 # Store user language preferences and translation models
-user_languages = {}  # {sid: {'spoken': 'en', 'listen': 'fr', 'room_id': 'call1'}}
+user_languages = {}  # {sid: {'spoken': 'en', 'listen': 'fr', 'room_id': 'room1'}}
+room_occupancy = {}  # {room_id: set([sid1, sid2])} - tracks users in each room
 translation_models = {}  # {(src_lang, tgt_lang): translator}
 
 # Supported languages (aligned with tts.py)
@@ -37,7 +47,7 @@ if not os.path.exists(TEMP_DIR):
     logger.info(f"Created temporary directory: {TEMP_DIR}")
 
 # Serve frontend
-@app.route('/')
+@app.route('/ui')
 def serve_ui():
     return render_template('index.html')
 
@@ -49,20 +59,34 @@ def health():
 # WebSocket Events
 @socketio.on('connect')
 def handle_connect():
-    logger.info(f"Client connected: {request.sid}")
+    sid = request.sid
+    logger.info(f"Client connected: {sid} with transport {request.environ.get('HTTP_X_TRANSPORT', 'unknown')}")
+    emit('connected', {'sid': sid})
 
 @socketio.on('disconnect')
 def handle_disconnect():
     sid = request.sid
+    logger.info(f"Client disconnected: {sid}")
     if sid in user_languages:
         room_id = user_languages[sid]['room_id']
-        logger.info(f"User {sid} disconnected from call {room_id}")
+        logger.info(f"User {sid} disconnected from room {room_id}")
+        
+        # Remove user from room occupancy
+        if room_id in room_occupancy and sid in room_occupancy[room_id]:
+            room_occupancy[room_id].discard(sid)
+            if not room_occupancy[room_id]:  # If room is empty, clean up
+                del room_occupancy[room_id]
+                logger.debug(f"Room {room_id} is now empty and removed")
+        
+        # Notify other users in the room
+        other_users = [s for s in user_languages 
+                      if user_languages[s]['room_id'] == room_id and s != sid]
+        for other_sid in other_users:
+            emit('user_left', {'sid': sid}, room=other_sid)
+        
+        leave_room(room_id)
         del user_languages[sid]
-        # Notify the other user in the room
-        other_sids = [s for s in user_languages if user_languages[s]['room_id'] == room_id]
-        for other_sid in other_sids:
-            emit('user_left', {'message': f"User {sid} has left the call"}, room=other_sid)
-    logger.info(f"Client disconnected: {sid}")
+    logger.debug(f"Session cleanup completed for {sid}")
 
 @socketio.on('join_call')
 def handle_join_call(data):
@@ -72,25 +96,31 @@ def handle_join_call(data):
     listen_lang = data.get('listen')
     
     if not room_id or not spoken_lang or not listen_lang:
-        emit('error', {'message': 'Missing room_id, spoken, or listen parameters'}, room=sid)
+        logger.warning(f"Join attempt failed for {sid}: Missing room_id, spoken, or listen parameters")
+        emit('error', {'message': 'Missing room_id, spoken, or listen parameters'})
         return
     
     if spoken_lang not in SUPPORTED_LANGUAGES or listen_lang not in SUPPORTED_LANGUAGES:
-        emit('error', {'message': f"Unsupported language. Supported: {SUPPORTED_LANGUAGES}"}, room=sid)
+        logger.warning(f"Join attempt failed for {sid}: Unsupported language (spoken: {spoken_lang}, listen: {listen_lang})")
+        emit('error', {'message': f"Unsupported language. Supported: {SUPPORTED_LANGUAGES}"})
         return
     
-    # Check if the room already has two users
-    room_sids = [s for s in user_languages if user_languages[s]['room_id'] == room_id]
-    if len(room_sids) >= 2:
-        emit('error', {'message': 'Room is full. Only two users are allowed per call.'}, room=sid)
-        return
+    # Add user to room
+    if room_id not in room_occupancy:
+        room_occupancy[room_id] = set()
+    room_occupancy[room_id].add(sid)
     
-    # Add user to the room
     user_languages[sid] = {'spoken': spoken_lang, 'listen': listen_lang, 'room_id': room_id}
     join_room(room_id)
     logger.info(f"User {sid} joined call {room_id} (speaks: {spoken_lang}, listens: {listen_lang})")
     
-    # Load translation models for the other user in the room (if any)
+    # Notify existing users in the room
+    other_users = [s for s in user_languages 
+                  if user_languages[s]['room_id'] == room_id and s != sid]
+    for other_sid in other_users:
+        emit('user_joined', {'sid': sid}, room=other_sid)
+    
+    # Load translation models
     other_sids = [s for s in user_languages if s != sid and user_languages[s]['room_id'] == room_id]
     for other_sid in other_sids:
         other_spoken = user_languages[other_sid]['spoken']
@@ -106,16 +136,41 @@ def handle_join_call(data):
                 except Exception as e:
                     logger.error(f"Failed to load translator for {src} to {tgt}: {str(e)}")
     
-    # Notify the other user (if any) that a new user joined
-    for other_sid in other_sids:
-        emit('user_joined', {'message': f"User {sid} has joined the call"}, room=other_sid)
+    emit('joined', {'room_id': room_id, 'sid': sid, 'room_size': len(room_occupancy[room_id])})
+
+@socketio.on('leave_call')
+def handle_leave_call():
+    sid = request.sid
+    if sid not in user_languages:
+        logger.warning(f"Leave attempt failed for {sid}: User not in any call")
+        emit('error', {'message': 'User not in any call'}, room=sid)
+        return
     
-    emit('joined', {'room_id': room_id, 'sid': sid}, room=sid)
+    room_id = user_languages[sid]['room_id']
+    
+    # Remove user from room
+    if room_id in room_occupancy and sid in room_occupancy[room_id]:
+        room_occupancy[room_id].discard(sid)
+        if not room_occupancy[room_id]:  # If room is empty, clean up
+            del room_occupancy[room_id]
+            logger.debug(f"Room {room_id} is now empty and removed")
+    
+    # Notify other users in the room
+    other_users = [s for s in user_languages 
+                  if user_languages[s]['room_id'] == room_id and s != sid]
+    for other_sid in other_users:
+        emit('user_left', {'sid': sid}, room=other_sid)
+    
+    leave_room(room_id)
+    del user_languages[sid]
+    emit('left', {'room_id': room_id}, room=sid)
+    logger.info(f"User {sid} left call {room_id}")
 
 @socketio.on('audio_chunk')
 def handle_audio(data):
     sid = request.sid
     if 'chunk' not in data:
+        logger.warning(f"Audio chunk processing failed for {sid}: Missing audio chunk")
         emit('error', {'message': 'Missing audio chunk'}, room=sid)
         return
     
@@ -124,16 +179,19 @@ def handle_audio(data):
         with io.BytesIO(audio_bytes) as f:
             audio, sample_rate = sf.read(f)
         if audio.size == 0:
+            logger.warning(f"Audio chunk processing failed for {sid}: Invalid or empty audio data")
             emit('error', {'message': 'Invalid or empty audio data'}, room=sid)
             return
         if audio.dtype != np.float32:
             audio = audio.astype(np.float32)
-        logger.debug(f"Audio processed: sample_rate={sample_rate}, shape={audio.shape}")
+        logger.debug(f"Audio processed for {sid}: sample_rate={sample_rate}, shape={audio.shape}")
     except Exception as e:
+        logger.error(f"Audio chunk processing failed for {sid}: Invalid audio format: {str(e)}")
         emit('error', {'message': f"Invalid audio format: {str(e)}"}, room=sid)
         return
     
     if sid not in user_languages:
+        logger.warning(f"Audio chunk processing failed for {sid}: User not registered")
         emit('error', {'message': 'User not registered. Please join a call first.'}, room=sid)
         return
     
@@ -154,65 +212,68 @@ def handle_audio(data):
         emit('error', {'message': f"Transcription error: {str(e)}"}, room=sid)
         return
     
-    # Find the other user in the call
+    # Find all other users in the call
     other_sids = [s for s in user_languages if s != sid and user_languages[s]['room_id'] == room_id]
     if not other_sids:
-        logger.warning(f"No other user found in call {room_id} for {sid}")
-        emit('error', {'message': 'No other user in the call'}, room=sid)
+        logger.warning(f"No other users found in call {room_id} for {sid}")
+        emit('error', {'message': 'No other users in the call'}, room=sid)
         return
     
-    target_sid = other_sids[0]  # Only one other user in a two-user room
-    target_lang = user_languages[target_sid]['listen']
-    logger.debug(f"Processing translation for {target_sid} (from {sender_lang} to {target_lang})")
-    
-    try:
-        if sender_lang == target_lang:  # Skip translation for same-language pairs
-            translated_text = text
-            logger.debug(f"No translation needed for {target_sid} (same language: {target_lang})")
-        else:
-            if (sender_lang, target_lang) not in translation_models:
-                logger.debug(f"Loading translation model for {sender_lang} to {target_lang}")
-                translator = load_translation_model(sender_lang, target_lang)
-                translation_models[(sender_lang, target_lang)] = translator
-            translator = translation_models[(sender_lang, target_lang)]
-            
-            logger.debug(f"Translating from {sender_lang} to {target_lang} for {target_sid}...")
-            translated_text = translate_text(text, translator, sender_lang, target_lang)
-        
-        logger.debug(f"Translation result for {target_sid}: {translated_text}")
-        
-        logger.debug(f"Generating TTS for {translated_text} in {target_lang}")
+    # Translate and send to all other users
+    for target_sid in other_sids:
+        target_lang = user_languages[target_sid]['listen']
+        logger.debug(f"Processing translation for {target_sid} (from {sender_lang} to {target_lang})")
         try:
-            audio_b64 = speak_text(translated_text, lang=target_lang)
-            logger.debug(f"TTS generated for {target_sid}")
+            if sender_lang == target_lang:  # Skip translation for same-language pairs
+                translated_text = text
+                logger.debug(f"No translation needed for {target_sid} (same language: {target_lang})")
+            else:
+                if (sender_lang, target_lang) not in translation_models:
+                    logger.debug(f"Loading translation model for {sender_lang} to {target_lang}")
+                    translator = load_translation_model(sender_lang, target_lang)
+                    translation_models[(sender_lang, target_lang)] = translator
+                translator = translation_models[(sender_lang, target_lang)]
+                
+                logger.debug(f"Translating from {sender_lang} to {target_lang} for {target_sid}...")
+                translated_text = translate_text(text, translator, sender_lang, target_lang)
+            
+            logger.debug(f"Translation result for {target_sid}: {translated_text}")
+            
+            logger.debug(f"Generating TTS for {translated_text} in {target_lang}")
+            try:
+                audio_b64 = speak_text(translated_text, lang=target_lang)
+                logger.debug(f"TTS generated for {target_sid}")
+            except Exception as e:
+                logger.error(f"TTS generation failed for {target_sid}: {str(e)}")
+                emit('error', {'message': f"TTS generation error: {str(e)}"}, room=target_sid)
+                continue
+            
+            logger.debug(f"Emitting translated_audio to {target_sid}")
+            emit('translated_audio', {
+                'chunk': audio_b64,
+                'from_sid': sid,
+                'to_lang': target_lang
+            }, room=target_sid)
         except Exception as e:
-            logger.error(f"TTS generation failed for {target_sid}: {str(e)}")
-            emit('error', {'message': f"TTS generation error: {str(e)}"}, room=target_sid)
-            return
-        
-        logger.debug(f"Emitting translated_audio to {target_sid}")
-        emit('translated_audio', {
-            'chunk': audio_b64,
-            'from_sid': sid,
-            'to_lang': target_lang
-        }, room=target_sid)
-    except Exception as e:
-        logger.error(f"Translation error for {sid} to {target_sid}: {str(e)}")
-        emit('error', {'message': f"Translation error: {str(e)}"}, room=target_sid)
+            logger.error(f"Translation error for {sid} to {target_sid}: {str(e)}")
+            emit('error', {'message': f"Translation error: {str(e)}"}, room=target_sid)
 
 @socketio.on('text_message')
 def handle_text_message(data):
     sid = request.sid
     if 'message' not in data:
+        logger.warning(f"Text message processing failed for {sid}: Missing text message")
         emit('error', {'message': 'Missing text message'}, room=sid)
         return
     
     text = data['message']
     if not isinstance(text, str) or not text.strip():
+        logger.warning(f"Text message processing failed for {sid}: Invalid or empty text message")
         emit('error', {'message': 'Invalid or empty text message'}, room=sid)
         return
     
     if sid not in user_languages:
+        logger.warning(f"Text message processing failed for {sid}: User not registered")
         emit('error', {'message': 'User not registered. Please join a call first.'}, room=sid)
         return
     
@@ -221,46 +282,47 @@ def handle_text_message(data):
     
     logger.debug(f"Received text message from {sid}: {text}")
     
-    # Find the other user in the call
+    # Find all other users in the call
     other_sids = [s for s in user_languages if s != sid and user_languages[s]['room_id'] == room_id]
     if not other_sids:
-        logger.warning(f"No other user found in call {room_id} for {sid}")
-        emit('error', {'message': 'No other user in the call'}, room=sid)
+        logger.warning(f"No other users found in call {room_id} for {sid}")
+        emit('error', {'message': 'No other users in the call'}, room=sid)
         return
     
-    target_sid = other_sids[0]  # Only one other user in a two-user room
-    target_lang = user_languages[target_sid]['listen']
-    logger.debug(f"Processing text translation for {target_sid} (from {sender_lang} to {target_lang})")
-    
-    try:
-        if sender_lang == target_lang:  # Skip translation for same-language pairs
-            translated_text = text
-            logger.debug(f"No translation needed for {target_sid} (same language: {target_lang})")
-        else:
-            if (sender_lang, target_lang) not in translation_models:
-                logger.debug(f"Loading translation model for {sender_lang} to {target_lang}")
-                translator = load_translation_model(sender_lang, target_lang)
-                translation_models[(sender_lang, target_lang)] = translator
-            translator = translation_models[(sender_lang, target_lang)]
+    # Translate and send to all other users
+    for target_sid in other_sids:
+        target_lang = user_languages[target_sid]['listen']
+        logger.debug(f"Processing text translation for {target_sid} (from {sender_lang} to {target_lang})")
+        try:
+            if sender_lang == target_lang:  # Skip translation for same-language pairs
+                translated_text = text
+                logger.debug(f"No translation needed for {target_sid} (same language: {target_lang})")
+            else:
+                if (sender_lang, target_lang) not in translation_models:
+                    logger.debug(f"Loading translation model for {sender_lang} to {target_lang}")
+                    translator = load_translation_model(sender_lang, target_lang)
+                    translation_models[(sender_lang, target_lang)] = translator
+                translator = translation_models[(sender_lang, target_lang)]
+                
+                logger.debug(f"Translating text from {sender_lang} to {target_lang} for {target_sid}...")
+                translated_text = translate_text(text, translator, sender_lang, target_lang)
             
-            logger.debug(f"Translating text from {sender_lang} to {target_lang} for {target_sid}...")
-            translated_text = translate_text(text, translator, sender_lang, target_lang)
-        
-        logger.debug(f"Text translation result for {target_sid}: {translated_text}")
-        
-        logger.debug(f"Emitting translated_text to {target_sid}")
-        emit('translated_text', {
-            'translated_text': translated_text,
-            'from_sid': sid,
-            'to_lang': target_lang
-        }, room=target_sid)
-    except Exception as e:
-        logger.error(f"Text translation error for {sid} to {target_sid}: {str(e)}")
-        emit('error', {'message': f"Text translation error: {str(e)}"}, room=target_sid)
+            logger.debug(f"Text translation result for {target_sid}: {translated_text}")
+            
+            logger.debug(f"Emitting translated_text to {target_sid}")
+            emit('translated_text', {
+                'translated_text': translated_text,
+                'from_sid': sid,
+                'to_lang': target_lang
+            }, room=target_sid)
+        except Exception as e:
+            logger.error(f"Text translation error for {sid} to {target_sid}: {str(e)}")
+            emit('error', {'message': f"Text translation error: {str(e)}"}, room=target_sid)
 
 @app.route('/translate_audio_file', methods=['POST'])
 def translate_audio_file():
     if 'audio' not in request.files or 'spoken' not in request.form or 'listen' not in request.form:
+        logger.warning("Audio file translation failed: Missing audio file or language parameters")
         return jsonify({"error": "Missing audio file or language parameters"}), 400
 
     spoken_lang = request.form['spoken']
@@ -268,6 +330,7 @@ def translate_audio_file():
     audio_file = request.files['audio']
 
     if spoken_lang not in SUPPORTED_LANGUAGES or listen_lang not in SUPPORTED_LANGUAGES:
+        logger.warning(f"Audio file translation failed: Unsupported language (spoken: {spoken_lang}, listen: {listen_lang})")
         return jsonify({"error": f"Unsupported language. Supported: {SUPPORTED_LANGUAGES}"}), 400
 
     audio_bytes = audio_file.read()
@@ -276,6 +339,7 @@ def translate_audio_file():
         logger.debug(f"Transcribing audio file in {spoken_lang}...")
         text = transcribe_chunk(audio_bytes, language=spoken_lang, temp_dir=TEMP_DIR)
         if not text:
+            logger.warning("Audio file translation failed: Could not transcribe audio")
             return jsonify({"error": "Could not transcribe audio"}), 500
         logger.debug(f"Transcription result: {text}")
 
