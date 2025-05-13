@@ -27,7 +27,6 @@ socketio = SocketIO(
     cors_allowed_origins="*",
     logger=True,
     engineio_logger=True,
-    transports=['polling'],  # Force polling transport
     ping_timeout=20000,      # Adjust timeouts for polling
     ping_interval=10000
 )
@@ -169,22 +168,18 @@ def handle_leave_call():
 @socketio.on('audio_chunk')
 def handle_audio(data):
     sid = request.sid
-    if 'chunk' not in data:
+    if 'content' not in data:
         logger.warning(f"Audio chunk processing failed for {sid}: Missing audio chunk")
         emit('error', {'message': 'Missing audio chunk'}, room=sid)
         return
     
     try:
-        audio_bytes = base64.b64decode(data['chunk'])
-        with io.BytesIO(audio_bytes) as f:
-            audio, sample_rate = sf.read(f)
-        if audio.size == 0:
-            logger.warning(f"Audio chunk processing failed for {sid}: Invalid or empty audio data")
-            emit('error', {'message': 'Invalid or empty audio data'}, room=sid)
+        audio_bytes = base64.b64decode(data['content'])
+        if not audio_bytes:
+            logger.warning(f"Audio chunk processing failed for {sid}: Empty audio data")
+            emit('error', {'message': 'Empty audio data'}, room=sid)
             return
-        if audio.dtype != np.float32:
-            audio = audio.astype(np.float32)
-        logger.debug(f"Audio processed for {sid}: sample_rate={sample_rate}, shape={audio.shape}")
+        logger.debug(f"Audio received for {sid}: {len(audio_bytes)} bytes")
     except Exception as e:
         logger.error(f"Audio chunk processing failed for {sid}: Invalid audio format: {str(e)}")
         emit('error', {'message': f"Invalid audio format: {str(e)}"}, room=sid)
@@ -250,7 +245,7 @@ def handle_audio(data):
             
             logger.debug(f"Emitting translated_audio to {target_sid}")
             emit('translated_audio', {
-                'chunk': audio_b64,
+                'content': audio_b64,
                 'from_sid': sid,
                 'to_lang': target_lang
             }, room=target_sid)
@@ -321,6 +316,7 @@ def handle_text_message(data):
 
 @app.route('/translate_audio_file', methods=['POST'])
 def translate_audio_file():
+    # Check for required parameters
     if 'audio' not in request.files or 'spoken' not in request.form or 'listen' not in request.form:
         logger.warning("Audio file translation failed: Missing audio file or language parameters")
         return jsonify({"error": "Missing audio file or language parameters"}), 400
@@ -329,21 +325,27 @@ def translate_audio_file():
     listen_lang = request.form['listen']
     audio_file = request.files['audio']
 
+    # Validate languages
     if spoken_lang not in SUPPORTED_LANGUAGES or listen_lang not in SUPPORTED_LANGUAGES:
         logger.warning(f"Audio file translation failed: Unsupported language (spoken: {spoken_lang}, listen: {listen_lang})")
         return jsonify({"error": f"Unsupported language. Supported: {SUPPORTED_LANGUAGES}"}), 400
 
+    # Get file extension for better format detection
+    filename = audio_file.filename
+    extension = os.path.splitext(filename)[1] if filename else '.tmp'
     audio_bytes = audio_file.read()
 
     try:
+        # Transcribe the audio
         logger.debug(f"Transcribing audio file in {spoken_lang}...")
-        text = transcribe_chunk(audio_bytes, language=spoken_lang, temp_dir=TEMP_DIR)
+        text = transcribe_chunk(audio_bytes, language=spoken_lang, temp_dir=TEMP_DIR, extension=extension)
         if not text:
             logger.warning("Audio file translation failed: Could not transcribe audio")
             return jsonify({"error": "Could not transcribe audio"}), 500
         logger.debug(f"Transcription result: {text}")
 
-        if spoken_lang == listen_lang:  # Skip translation for same-language pairs
+        # Translate if languages differ
+        if spoken_lang == listen_lang:
             translated_text = text
             logger.debug(f"No translation needed (same language: {listen_lang})")
         else:
@@ -351,13 +353,15 @@ def translate_audio_file():
                 translator = load_translation_model(spoken_lang, listen_lang)
                 translation_models[(spoken_lang, listen_lang)] = translator
             translator = translation_models[(spoken_lang, listen_lang)]
-
             logger.debug(f"Translating from {spoken_lang} to {listen_lang}...")
             translated_text = translate_text(text, translator, spoken_lang, listen_lang)
+            logger.debug(f"Translation result: {translated_text}")
 
-        logger.debug(f"Translation result: {translated_text}")
-
+        # Generate translated audio in base64
         translated_audio_b64 = speak_text(translated_text, lang=listen_lang)
+        if not translated_audio_b64:
+            logger.error("Failed to generate translated audio")
+            return jsonify({"error": "Failed to generate translated audio"}), 500
 
         return jsonify({
             "translated_text": translated_text,
@@ -367,6 +371,7 @@ def translate_audio_file():
     except Exception as e:
         logger.error(f"Audio file translation error: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
     
 if __name__ == '__main__':
     print("Starting Flask-SocketIO server on http://172.16.11.159:5000")
