@@ -10,13 +10,13 @@ import { SUPPORTED_LANGUAGES } from '../../constants/languages'
 
 export default function JoinCallCard() {
   const navigate = useNavigate()
-  const { spokenLanguage, listenLanguage, setSpokenLanguage, setListenLanguage } = useSettings()
+  const { language, setLanguage } = useSettings()
   const { joinCall, isConnected } = useSocket()
   const [roomId, setRoomId] = useState('')
 
   const handleJoin = () => {
     if (!roomId.trim()) return
-    joinCall(roomId.trim(), spokenLanguage, listenLanguage)
+    joinCall(roomId.trim(), language)
     navigate(`/call/${roomId.trim()}`)
   }
 
@@ -43,18 +43,15 @@ export default function JoinCallCard() {
         </div>
 
         <Select
-          label="I speak"
+          label="My Language"
           options={SUPPORTED_LANGUAGES}
-          value={spokenLanguage}
-          onChange={setSpokenLanguage}
+          value={language}
+          onChange={setLanguage}
         />
 
-        <Select
-          label="I want to hear"
-          options={SUPPORTED_LANGUAGES}
-          value={listenLanguage}
-          onChange={setListenLanguage}
-        />
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          You'll speak and see all messages in this language. Other people's messages will be auto-translated for you.
+        </p>
 
         <Button
           onClick={handleJoin}

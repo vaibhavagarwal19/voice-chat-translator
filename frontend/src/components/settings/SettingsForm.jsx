@@ -8,7 +8,7 @@ import { SUPPORTED_LANGUAGES } from '../../constants/languages'
 import { Settings, Trash2 } from 'lucide-react'
 
 export default function SettingsForm() {
-  const { spokenLanguage, setSpokenLanguage, listenLanguage, setListenLanguage } = useSettings()
+  const { language, setLanguage } = useSettings()
   const { clearHistory, history } = useCallHistory()
 
   return (
@@ -22,24 +22,16 @@ export default function SettingsForm() {
       </Card>
 
       <Card>
-        <h2 className="text-lg font-semibold mb-4">Default Languages</h2>
+        <h2 className="text-lg font-semibold mb-2">My Language</h2>
         <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-          These will be pre-selected when you join a call.
+          You'll speak in this language and see all chat messages translated to it.
         </p>
-        <div className="space-y-4">
-          <Select
-            label="Default spoken language"
-            options={SUPPORTED_LANGUAGES}
-            value={spokenLanguage}
-            onChange={setSpokenLanguage}
-          />
-          <Select
-            label="Default listening language"
-            options={SUPPORTED_LANGUAGES}
-            value={listenLanguage}
-            onChange={setListenLanguage}
-          />
-        </div>
+        <Select
+          label="Default language"
+          options={SUPPORTED_LANGUAGES}
+          value={language}
+          onChange={setLanguage}
+        />
       </Card>
 
       <Card>

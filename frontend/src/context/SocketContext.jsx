@@ -106,11 +106,11 @@ export function SocketProvider({ children }) {
     }
   }, [])
 
-  const joinCall = useCallback((roomId, spoken, listen) => {
+  const joinCall = useCallback((roomId, language) => {
     setMessages([])
     setError(null)
     setLiveTranscription(null)
-    socket.emit('join_call', { room_id: roomId, spoken, listen })
+    socket.emit('join_call', { room_id: roomId, language })
   }, [])
 
   const leaveCall = useCallback(() => {

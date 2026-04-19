@@ -3,12 +3,11 @@ import { useLocalStorage } from './useLocalStorage'
 export function useCallHistory() {
   const [history, setHistory] = useLocalStorage('vct-call-history', [])
 
-  const addCall = (roomId, spokenLang, listenLang) => {
+  const addCall = (roomId, language) => {
     const entry = {
       id: crypto.randomUUID(),
       roomId,
-      spokenLang,
-      listenLang,
+      language,
       startedAt: new Date().toISOString(),
       endedAt: null,
       messageCount: 0,

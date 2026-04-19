@@ -35,7 +35,7 @@ TEMP_DIR = os.path.join(os.path.dirname(__file__), "temp")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 # In-memory state
-user_languages = {}      # {sid: {'spoken', 'listen', 'room_id'}}
+user_languages = {}      # {sid: {'language', 'room_id'}}
 room_occupancy = {}      # {room_id: set(sid)}
 translation_models = {}  # {(src_lang, tgt_lang): translator}
 audio_buffers = {}       # {sid: bytearray()}
@@ -147,43 +147,44 @@ def handle_disconnect():
 def handle_join_call(data):
     sid = request.sid
     room_id = data.get('room_id')
-    spoken_lang = data.get('spoken')
-    listen_lang = data.get('listen')
+    # User has ONE language - they speak it AND see/hear everything in it
+    language = data.get('language') or data.get('spoken')
 
-    if not room_id or not spoken_lang or not listen_lang:
-        emit('error', {'message': 'Missing room_id, spoken, or listen parameters'})
+    if not room_id or not language:
+        emit('error', {'message': 'Missing room_id or language'})
         return
 
-    if spoken_lang not in SUPPORTED_LANGUAGES or listen_lang not in SUPPORTED_LANGUAGES:
-        emit('error', {'message': 'Unsupported language'})
+    if language not in SUPPORTED_LANGUAGES:
+        emit('error', {'message': f'Unsupported language: {language}'})
         return
 
     # Snapshot existing participants BEFORE adding the new user
     existing = [
-        {'sid': s, 'spoken': user_languages[s]['spoken']}
+        {'sid': s, 'language': user_languages[s]['language']}
         for s in user_languages
         if user_languages[s]['room_id'] == room_id
     ]
 
     room_occupancy.setdefault(room_id, set()).add(sid)
-    user_languages[sid] = {'spoken': spoken_lang, 'listen': listen_lang, 'room_id': room_id}
+    user_languages[sid] = {'language': language, 'room_id': room_id}
     join_room(room_id)
-    logger.info(f"{sid} joined {room_id} ({spoken_lang} -> {listen_lang})")
+    logger.info(f"{sid} joined {room_id} (language: {language})")
 
     for other_sid in get_other_sids(sid, room_id):
-        emit('user_joined', {'sid': sid, 'spoken': spoken_lang}, room=other_sid)
+        emit('user_joined', {'sid': sid, 'language': language}, room=other_sid)
 
         # Pre-load translation models in both directions
-        other = user_languages[other_sid]
+        other_lang = user_languages[other_sid]['language']
         try:
-            get_or_load_translator(spoken_lang, other['listen'])
-            get_or_load_translator(other['spoken'], listen_lang)
+            get_or_load_translator(language, other_lang)
+            get_or_load_translator(other_lang, language)
         except Exception as e:
             logger.error(f"Failed to pre-load translation model: {e}")
 
     emit('joined', {
         'room_id': room_id,
         'sid': sid,
+        'language': language,
         'room_size': len(room_occupancy[room_id]),
         'participants': existing,
     })
@@ -240,7 +241,7 @@ def handle_audio(data):
     # Faster-Whisper handles short audio well, so this gives a near real-time feel.
     chunk_index = data.get('chunk_index', 0)
     if chunk_index > 0 and len(audio_buffers[sid]) > 30000:
-        sender_lang = user_languages[sid]['spoken']
+        sender_lang = user_languages[sid]['language']
         room_id = user_languages[sid]['room_id']
         try:
             text = transcribe_chunk(bytes(audio_buffers[sid]), language=sender_lang, temp_dir=TEMP_DIR)
@@ -259,7 +260,7 @@ def handle_stop_streaming(data=None):
     if sid not in user_languages:
         return
 
-    sender_lang = user_languages[sid]['spoken']
+    sender_lang = user_languages[sid]['language']
     room_id = user_languages[sid]['room_id']
     full_audio = bytes(audio_buffers.pop(sid, bytearray()))
 
@@ -301,7 +302,7 @@ def _broadcast_message(sender_sid, room_id, text, sender_lang, with_audio=False)
         if user_sid not in user_languages:
             continue
 
-        viewer_lang = user_languages[user_sid]['listen']
+        viewer_lang = user_languages[user_sid]['language']
         is_self = user_sid == sender_sid
 
         try:
@@ -343,9 +344,9 @@ def handle_text_message(data):
         emit('error', {'message': 'Not in a call'}, room=sid)
         return
 
-    sender_lang = user_languages[sid]['spoken']
+    sender_lang = user_languages[sid]['language']
     room_id = user_languages[sid]['room_id']
-    _broadcast_message(sid, room_id, text, sender_lang, with_audio=False)
+    _broadcast_message(sid, room_id, text, sender_lang, with_audio=True)
 
 
 if __name__ == '__main__':

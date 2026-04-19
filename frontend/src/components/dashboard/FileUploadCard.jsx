@@ -9,9 +9,9 @@ import { translateAudioFile } from '../../services/api'
 import { playBase64Audio } from '../../services/audioUtils'
 
 export default function FileUploadCard() {
-  const { spokenLanguage, listenLanguage } = useSettings()
-  const [srcLang, setSrcLang] = useState(spokenLanguage)
-  const [tgtLang, setTgtLang] = useState(listenLanguage)
+  const { language } = useSettings()
+  const [srcLang, setSrcLang] = useState(language)
+  const [tgtLang, setTgtLang] = useState(language === 'en' ? 'fr' : 'en')
   const [file, setFile] = useState(null)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)

@@ -7,8 +7,8 @@ export function SettingsProvider({ children }) {
   const [darkMode, setDarkMode] = useLocalStorage('vct-dark-mode',
     window.matchMedia('(prefers-color-scheme: dark)').matches
   )
-  const [spokenLanguage, setSpokenLanguage] = useLocalStorage('vct-spoken-lang', 'en')
-  const [listenLanguage, setListenLanguage] = useLocalStorage('vct-listen-lang', 'fr')
+  // Single language per user - they speak in it AND see/hear everything in it
+  const [language, setLanguage] = useLocalStorage('vct-language', 'en')
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode)
@@ -21,10 +21,8 @@ export function SettingsProvider({ children }) {
       value={{
         darkMode,
         toggleDarkMode,
-        spokenLanguage,
-        setSpokenLanguage,
-        listenLanguage,
-        setListenLanguage,
+        language,
+        setLanguage,
       }}
     >
       {children}

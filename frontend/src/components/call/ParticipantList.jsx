@@ -18,11 +18,11 @@ export default function ParticipantList({ participants, speakingUsers = new Set(
           {participants.map((p, i) => {
             const isSpeaking = speakingUsers.has(p.sid)
             return (
-              <div key={i} className="flex items-center gap-2 text-sm">
+              <div key={p.sid || i} className="flex items-center gap-2 text-sm">
                 <div className={`w-2 h-2 rounded-full ${isSpeaking ? 'bg-yellow-500 animate-pulse' : 'bg-green-500'}`} />
-                <span className="text-gray-700 dark:text-gray-300">User {i + 1}</span>
+                <span className="text-gray-700 dark:text-gray-300">User {p.sid?.slice(0, 4) || i + 1}</span>
                 {isSpeaking && <Mic className="w-3 h-3 text-yellow-500 animate-pulse" />}
-                <Badge variant="blue">{SUPPORTED_LANGUAGES[p.spoken] || p.spoken}</Badge>
+                <Badge variant="blue">{SUPPORTED_LANGUAGES[p.language] || p.language}</Badge>
               </div>
             )
           })}

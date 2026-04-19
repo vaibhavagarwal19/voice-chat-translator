@@ -28,7 +28,7 @@ export default function CallPage() {
     sendAudioChunk,
     error,
   } = useSocket()
-  const { spokenLanguage, listenLanguage } = useSettings()
+  const { language } = useSettings()
   const [autoMode, setAutoMode] = useState(false)
 
   // ---- Manual mode (button-driven recording) ----
@@ -90,7 +90,7 @@ export default function CallPage() {
           <div>
             <h1 className="text-xl font-bold">Room: {roomId}</h1>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              {spokenLanguage.toUpperCase()} &rarr; {listenLanguage.toUpperCase()}
+              Your language: {language.toUpperCase()}
             </p>
           </div>
         </div>

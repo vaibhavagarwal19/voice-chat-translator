@@ -1,4 +1,4 @@
-import { Phone, MessageSquare, ArrowRight } from 'lucide-react'
+import { Phone, MessageSquare } from 'lucide-react'
 import Badge from '../ui/Badge'
 import { SUPPORTED_LANGUAGES } from '../../constants/languages'
 
@@ -18,9 +18,7 @@ export default function HistoryItem({ call }) {
         <div>
           <p className="font-medium text-sm">{call.roomId}</p>
           <div className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
-            <span>{SUPPORTED_LANGUAGES[call.spokenLang] || call.spokenLang}</span>
-            <ArrowRight className="w-3 h-3" />
-            <span>{SUPPORTED_LANGUAGES[call.listenLang] || call.listenLang}</span>
+            <span>Language: {SUPPORTED_LANGUAGES[call.language] || call.language}</span>
           </div>
         </div>
       </div>
