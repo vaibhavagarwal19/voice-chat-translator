@@ -1,8 +1,12 @@
 Flask
+Flask-CORS
 Flask-SocketIO
 eventlet
+gTTS
+googletrans==4.0.0rc1
+numpy<2
 openai-whisper
-transformers
+python-socketio
+soundfile
 torch
-gtts
-sentencepiece
+urllib3<2

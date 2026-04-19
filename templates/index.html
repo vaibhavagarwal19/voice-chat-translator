@@ -57,9 +57,7 @@
                 <option value="es">Spanish</option>
             </select>
             <label class="block mb-2">Listening Language</label>
-            <select id="upload-listen-lang" class="wப்பட்ட
-
-System: full max-w-md">
+            <select id="upload-listen-lang" class="w-full p-2 border rounded mb-2">
                 <option value="fr">French</option>
                 <option value="en">English</option>
                 <option value="es">Spanish</option>
@@ -72,7 +70,7 @@ System: full max-w-md">
     </div>
 
     <script>
-        const socket = io('http://172.16.11.159:5000');
+        const socket = io(window.location.origin);
         let mediaRecorder = null;
         let audioContext = null;
         let source = null;
@@ -99,18 +97,18 @@ System: full max-w-md">
         });
 
         socket.on('joined', (data) => {
-            console.log(`Joined call ${data.call_id} as ${data.sid}`);
-            setStatus(`Joined call ${data.call_id}`, 'text-green-500');
+            console.log(`Joined call ${data.room_id} as ${data.sid}`);
+            setStatus(`Joined call ${data.room_id}`, 'text-green-500');
             document.getElementById('join-form').classList.add('hidden');
             toggleRecordingControls(true);
         });
 
         socket.on('translated_audio', (data) => {
-            const { chunk, original_text, translated_text } = data;
+            const { audio, original_text, translated_text } = data;
             console.log('Received translated audio:', { original_text, translated_text });
-            document.getElementById('original-text').textContent = original_text;
-            document.getElementById('translated-text').textContent = translated_text;
-            playAudio(chunk);
+            document.getElementById('original-text').textContent = original_text || '';
+            document.getElementById('translated-text').textContent = translated_text || '';
+            if (audio) playAudio(audio);
         });
 
         socket.on('error', (data) => {
@@ -130,7 +128,7 @@ System: full max-w-md">
             }
 
             socket.emit('join_call', {
-                call_id: callId,
+                room_id: callId,
                 spoken: spokenLang,
                 listen: listenLang
             });
@@ -156,7 +154,7 @@ System: full max-w-md">
                         const reader = new FileReader();
                         reader.onloadend = () => {
                             const base64String = reader.result.split(',')[1];
-                            socket.emit('audio_chunk', { chunk: base64String });
+                            socket.emit('audio_chunk', { content: base64String });
                         };
                         reader.readAsDataURL(wavBlob);
                     }

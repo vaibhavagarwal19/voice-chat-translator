@@ -2,11 +2,24 @@ from gtts import gTTS
 import base64
 import io
 
+# Map language codes to gTTS-compatible codes
+TTS_LANGUAGE_MAP = {
+    'zh': 'zh-cn',
+    'bn': 'bn',
+    'ur': 'ur',
+}
+
+SUPPORTED_TTS_LANGS = {'en', 'fr', 'es', 'de', 'it', 'pt', 'ru', 'zh', 'zh-cn', 'ar', 'nl', 'hi', 'ur', 'bn'}
+
+
 def speak_text(text, lang='fr'):
-    supported_langs = ['en', 'fr', 'es', 'de', 'it', 'pt', 'ru', 'zh-cn', 'ar', 'nl', 'hi']  # Example list
-    if lang not in supported_langs:
+    if lang not in SUPPORTED_TTS_LANGS:
         raise ValueError(f"Language '{lang}' not supported by gTTS")
-    tts = gTTS(text=text, lang=lang)
+
+    # Map to gTTS-compatible code
+    gtts_lang = TTS_LANGUAGE_MAP.get(lang, lang)
+
+    tts = gTTS(text=text, lang=gtts_lang)
     buf = io.BytesIO()
     tts.write_to_fp(buf)
     buf.seek(0)

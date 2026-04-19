@@ -1,0 +1,15 @@
+export const SUPPORTED_LANGUAGES = {
+  en: 'English',
+  fr: 'French',
+  es: 'Spanish',
+  de: 'German',
+  it: 'Italian',
+  pt: 'Portuguese',
+  ru: 'Russian',
+  zh: 'Chinese',
+  ar: 'Arabic',
+  nl: 'Dutch',
+  hi: 'Hindi',
+  ur: 'Urdu',
+  bn: 'Bengali',
+}

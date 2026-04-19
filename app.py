@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, render_template
+from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from transcriber import transcribe_chunk
 from translator import load_translation_model, translate_text
@@ -22,6 +23,7 @@ logger.debug("Logging initialized at DEBUG level for Flask-SocketIO server")
 
 # Initialize the Flask app
 app = Flask(__name__)
+CORS(app)
 
 # Initialize SocketIO for realtime communication with adjustable timeouts.
 socketio = SocketIO(
@@ -167,7 +169,7 @@ def handle_join_call(data):
 
 
 @socketio.on('leave_call')
-def handle_leave_call():
+def handle_leave_call(data=None):
     """
     Handle when a user explicitly leaves a call.
     - Remove the user from the room occupancy list.
@@ -295,8 +297,10 @@ def handle_audio(data):
             logger.debug(f"Emitting translated_audio to {target_sid}")
             # Send the translated audio to the target client
             emit('translated_audio', {
-                'content': audio_b64,
-                'from_sid': sid,
+                'audio': audio_b64,
+                'original_text': text,
+                'translated_text': translated_text,
+                'from': sid,
                 'to_lang': target_lang
             }, room=target_sid)
         except Exception as e:
@@ -314,13 +318,8 @@ def handle_text_message(data):
     - Broadcast the translated text message to all other users in the room.
     """
     sid = request.sid
-    if 'message' not in data:
-        logger.warning(f"Text message processing failed for {sid}: Missing text message")
-        emit('error', {'message': 'Missing text message'}, room=sid)
-        return
-
-    text = data['message']
-    if not isinstance(text, str) or not text.strip():
+    text = data.get('text') or data.get('message')
+    if not text or not isinstance(text, str) or not text.strip():
         logger.warning(f"Text message processing failed for {sid}: Invalid or empty text message")
         emit('error', {'message': 'Invalid or empty text message'}, room=sid)
         return
@@ -365,8 +364,9 @@ def handle_text_message(data):
             # Send the translated text to the target client
             logger.debug(f"Emitting translated_text to {target_sid}")
             emit('translated_text', {
+                'original_text': text,
                 'translated_text': translated_text,
-                'from_sid': sid,
+                'from': sid,
                 'to_lang': target_lang
             }, room=target_sid)
         except Exception as e:
@@ -386,12 +386,16 @@ def translate_audio_file():
     - Returns both the translated text and audio file (base64 encoded).
     """
     # Check for required parameters: audio file and language details.
-    if 'audio' not in request.files or 'spoken' not in request.form or 'listen' not in request.form:
-        logger.warning("Audio file translation failed: Missing audio file or language parameters")
-        return jsonify({"error": "Missing audio file or language parameters"}), 400
+    if 'audio' not in request.files:
+        logger.warning("Audio file translation failed: Missing audio file")
+        return jsonify({"error": "Missing audio file"}), 400
 
-    spoken_lang = request.form['spoken']
-    listen_lang = request.form['listen']
+    spoken_lang = request.form.get('spoken_language') or request.form.get('spoken')
+    listen_lang = request.form.get('listening_language') or request.form.get('listen')
+
+    if not spoken_lang or not listen_lang:
+        logger.warning("Audio file translation failed: Missing language parameters")
+        return jsonify({"error": "Missing language parameters"}), 400
     audio_file = request.files['audio']
 
     # Validate provided languages
@@ -445,6 +449,6 @@ def translate_audio_file():
 
 # Entry point for running the server.
 if __name__ == '__main__':
-    print("Starting Flask-SocketIO server on http://172.16.11.159:5000")
+    print("Starting Flask-SocketIO server on http://0.0.0.0:5000")
     # Start the server with debugging disabled for production use.
-    socketio.run(app, host='172.16.11.159', port=5000, debug=True, use_reloader=False)
+    socketio.run(app, host='0.0.0.0', port=5000, debug=True, use_reloader=False)
