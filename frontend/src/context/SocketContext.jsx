@@ -11,6 +11,7 @@ export function SocketProvider({ children }) {
   const [error, setError] = useState(null)
   const [liveTranscription, setLiveTranscription] = useState(null) // interim text while speaking
   const [speakingUsers, setSpeakingUsers] = useState(new Set())
+  const [isTranslating, setIsTranslating] = useState(false)
 
   useEffect(() => {
     socket.connect()
@@ -20,39 +21,28 @@ export function SocketProvider({ children }) {
 
     socket.on('joined', (data) => {
       setCurrentRoom(data.room_id)
-      setParticipants([])
+      setParticipants(data.participants || [])
       setError(null)
     })
 
     socket.on('user_joined', (data) => {
-      setParticipants((prev) => [...prev, data])
+      setParticipants((prev) => {
+        if (prev.some((p) => p.sid === data.sid)) return prev
+        return [...prev, data]
+      })
     })
 
     socket.on('user_left', (data) => {
       setParticipants((prev) => prev.filter((p) => p.sid !== data.sid))
     })
 
-    // Live transcription updates (interim and final from sender)
+    // Live transcription updates - shows what's being said in real time.
+    // Final transcription is captured by sent_translation/translated_audio,
+    // so we don't add it to messages here to avoid duplicates.
     socket.on('transcription_update', (data) => {
       if (data.is_final) {
-        // Final transcription — clear the live text
         setLiveTranscription(null)
-        // Only add to messages if there's actual text (sender sees their own transcription)
-        if (data.text) {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              type: 'transcription',
-              original: data.text,
-              translated: null,
-              from: data.from || 'self',
-              timestamp: new Date().toISOString(),
-            },
-          ])
-        }
       } else {
-        // Interim — update live transcription display
         setLiveTranscription({
           text: data.text,
           from: data.from || 'other',
@@ -60,35 +50,29 @@ export function SocketProvider({ children }) {
       }
     })
 
-    // Translated audio (final result for listener)
-    socket.on('translated_audio', (data) => {
+    // Single shared message event - broadcast to everyone in the room.
+    // Each user gets the message translated to their listening language.
+    socket.on('message', (data) => {
       setLiveTranscription(null)
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          type: 'audio',
-          original: data.original_text,
-          translated: data.translated_text,
-          audio: data.audio,
-          from: data.from || 'other',
-          timestamp: new Date().toISOString(),
-        },
-      ])
-    })
-
-    socket.on('translated_text', (data) => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          type: 'text',
-          original: data.original_text,
-          translated: data.translated_text,
-          from: data.from || 'other',
-          timestamp: new Date().toISOString(),
-        },
-      ])
+      setIsTranslating(false)
+      setMessages((prev) => {
+        // Dedupe by id (same message broadcast to multiple users)
+        if (prev.some((m) => m.id === data.id)) return prev
+        return [
+          ...prev,
+          {
+            id: data.id,
+            from_sid: data.from_sid,
+            isSelf: data.is_self,
+            originalText: data.original_text,
+            originalLang: data.original_lang,
+            translatedText: data.translated_text,
+            translatedLang: data.translated_lang,
+            audio: data.audio,
+            timestamp: new Date().toISOString(),
+          },
+        ]
+      })
     })
 
     // Track who is currently speaking
@@ -115,8 +99,7 @@ export function SocketProvider({ children }) {
       socket.off('user_joined')
       socket.off('user_left')
       socket.off('transcription_update')
-      socket.off('translated_text')
-      socket.off('translated_audio')
+      socket.off('message')
       socket.off('user_speaking')
       socket.off('error')
       socket.disconnect()
@@ -145,6 +128,7 @@ export function SocketProvider({ children }) {
   }, [])
 
   const stopStreaming = useCallback(() => {
+    setIsTranslating(true)
     socket.emit('stop_streaming')
   }, [])
 
@@ -166,6 +150,7 @@ export function SocketProvider({ children }) {
         error,
         liveTranscription,
         speakingUsers,
+        isTranslating,
         joinCall,
         leaveCall,
         startStreaming,

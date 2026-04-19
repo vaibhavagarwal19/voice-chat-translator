@@ -3,10 +3,9 @@ Flask-CORS
 Flask-SocketIO
 eventlet
 gTTS
-googletrans==4.0.0rc1
 numpy<2
-openai-whisper
+faster-whisper
+deep-translator
 python-socketio
 soundfile
-torch
 urllib3<2

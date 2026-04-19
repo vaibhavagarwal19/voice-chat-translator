@@ -1,6 +1,6 @@
-import { useEffect, useCallback } from 'react'
+import { useEffect, useCallback, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Phone } from 'lucide-react'
+import { Phone, Zap } from 'lucide-react'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import CallControls from '../components/call/CallControls'
@@ -9,6 +9,7 @@ import TextChat from '../components/call/TextChat'
 import ParticipantList from '../components/call/ParticipantList'
 import { useSocket } from '../context/SocketContext'
 import { useAudioRecorder } from '../hooks/useAudioRecorder'
+import { useVAD } from '../hooks/useVAD'
 import { playBase64Audio } from '../services/audioUtils'
 import { useSettings } from '../context/SettingsContext'
 
@@ -20,6 +21,7 @@ export default function CallPage() {
     messages,
     liveTranscription,
     speakingUsers,
+    isTranslating,
     leaveCall,
     startStreaming,
     stopStreaming,
@@ -27,20 +29,28 @@ export default function CallPage() {
     error,
   } = useSocket()
   const { spokenLanguage, listenLanguage } = useSettings()
+  const [autoMode, setAutoMode] = useState(false)
 
+  // ---- Manual mode (button-driven recording) ----
   const onChunk = useCallback((base64, chunkIndex) => {
     sendAudioChunk(base64, chunkIndex)
   }, [sendAudioChunk])
 
-  const onStart = useCallback(() => {
+  const { isRecording, startRecording, stopRecording } =
+    useAudioRecorder(onChunk, startStreaming, stopStreaming)
+
+  // ---- Auto mode (VAD-driven, hands-free) ----
+  const onSpeechStart = useCallback(() => {
     startStreaming()
   }, [startStreaming])
 
-  const onStop = useCallback(() => {
+  const onSpeechEnd = useCallback((base64Wav) => {
+    // Send the entire utterance as one chunk, then trigger backend processing
+    sendAudioChunk(base64Wav, 0)
     stopStreaming()
-  }, [stopStreaming])
+  }, [sendAudioChunk, stopStreaming])
 
-  const { isRecording, startRecording, stopRecording } = useAudioRecorder(onChunk, onStart, onStop)
+  const vad = useVAD(onSpeechStart, onSpeechEnd)
 
   // Auto-play incoming translated audio
   useEffect(() => {
@@ -52,13 +62,27 @@ export default function CallPage() {
 
   const handleLeave = () => {
     if (isRecording) stopRecording()
+    if (vad.isActive) vad.stop()
     leaveCall()
     navigate('/')
   }
 
+  const toggleAutoMode = async () => {
+    if (autoMode) {
+      vad.stop()
+      setAutoMode(false)
+    } else {
+      if (isRecording) stopRecording()
+      await vad.start()
+      setAutoMode(true)
+    }
+  }
+
+  const isStreaming = isRecording || vad.isSpeaking
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg">
             <Phone className="w-5 h-5 text-green-600 dark:text-green-400" />
@@ -71,24 +95,35 @@ export default function CallPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {autoMode && (
+            <Badge variant="blue">
+              <Zap className="w-3 h-3 mr-1" /> Auto VAD
+            </Badge>
+          )}
           {speakingUsers.size > 0 && (
             <Badge variant="yellow">
               <span className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse mr-1.5 inline-block" />
               Someone speaking
             </Badge>
           )}
-          {isRecording && (
+          {isTranslating && (
+            <Badge variant="blue">
+              <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse mr-1.5 inline-block" />
+              Translating...
+            </Badge>
+          )}
+          {isStreaming && (
             <Badge variant="red">
               <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse mr-1.5 inline-block" />
-              Recording
+              {vad.isSpeaking ? 'Capturing' : 'Recording'}
             </Badge>
           )}
         </div>
       </div>
 
-      {error && (
+      {(error || vad.error) && (
         <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg px-4 py-3 text-sm">
-          {error}
+          {error || vad.error}
         </div>
       )}
 
@@ -99,7 +134,7 @@ export default function CallPage() {
             <TranscriptionPanel
               messages={messages}
               liveTranscription={liveTranscription}
-              isRecording={isRecording}
+              isRecording={isStreaming}
             />
           </Card>
 
@@ -109,8 +144,10 @@ export default function CallPage() {
 
           <CallControls
             isRecording={isRecording}
+            autoMode={autoMode}
             onStartRecording={startRecording}
             onStopRecording={stopRecording}
+            onToggleAuto={toggleAutoMode}
             onLeave={handleLeave}
           />
         </div>

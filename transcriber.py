@@ -6,17 +6,16 @@ import time
 import traceback
 import uuid
 
-import numpy as np
-import soundfile as sf
-import whisper
+from faster_whisper import WhisperModel
 
 logger = logging.getLogger(__name__)
 
+# int8 quantization is 5x faster on CPU with comparable accuracy
 try:
-    model = whisper.load_model("medium")
-    logger.info("Whisper model 'medium' loaded successfully")
+    model = WhisperModel("medium", device="cpu", compute_type="int8")
+    logger.info("Faster-Whisper model 'medium' (int8) loaded successfully")
 except Exception as e:
-    logger.error(f"Failed to load Whisper model: {e}")
+    logger.error(f"Failed to load Faster-Whisper model: {e}")
     raise
 
 
@@ -59,7 +58,7 @@ def convert_to_wav(audio_bytes, temp_dir, extension='.tmp', retries=3):
 
 
 def transcribe_chunk(audio_bytes, language="en", retries=3, temp_dir=None, extension='.tmp'):
-    """Transcribe audio bytes using Whisper. Returns text or None on failure."""
+    """Transcribe audio bytes using Faster-Whisper. Returns text or None on failure."""
     if not audio_bytes or len(audio_bytes) < 44:
         logger.error("Invalid audio bytes")
         return None
@@ -78,38 +77,21 @@ def transcribe_chunk(audio_bytes, language="en", retries=3, temp_dir=None, exten
         return None
 
     try:
-        audio_data, sample_rate = sf.read(wav_file)
+        segments, _info = model.transcribe(
+            wav_file,
+            language=language,
+            beam_size=5,
+            vad_filter=True,
+            vad_parameters=dict(min_silence_duration_ms=500),
+        )
+        text = " ".join(seg.text for seg in segments).strip()
+        return text or None
     except Exception as e:
-        logger.error(f"Failed to read WAV: {e}")
+        logger.error(f"Faster-Whisper transcription failed: {e}\n{traceback.format_exc()}")
         return None
     finally:
         if os.path.exists(wav_file):
             try:
                 os.remove(wav_file)
-            except OSError:
-                pass
-
-    if len(audio_data.shape) > 1 and audio_data.shape[1] > 1:
-        audio_data = np.mean(audio_data, axis=1)
-
-    if audio_data.dtype != np.float32:
-        audio_data = audio_data.astype(np.float32)
-
-    if audio_data.size == 0:
-        return None
-
-    temp_file = os.path.join(temp_dir, _unique_name("whisper", ".wav"))
-    try:
-        sf.write(temp_file, audio_data, sample_rate)
-        result = model.transcribe(temp_file, fp16=False, language=language)
-        text = result['text'].strip()
-        return text or None
-    except Exception as e:
-        logger.error(f"Whisper transcription failed: {e}\n{traceback.format_exc()}")
-        return None
-    finally:
-        if os.path.exists(temp_file):
-            try:
-                os.remove(temp_file)
             except OSError:
                 pass

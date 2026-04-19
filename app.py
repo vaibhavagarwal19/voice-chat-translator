@@ -1,6 +1,10 @@
+import os
+
+# Workaround for OpenMP library conflict between PyTorch and CTranslate2
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 import base64
 import logging
-import os
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -154,6 +158,13 @@ def handle_join_call(data):
         emit('error', {'message': 'Unsupported language'})
         return
 
+    # Snapshot existing participants BEFORE adding the new user
+    existing = [
+        {'sid': s, 'spoken': user_languages[s]['spoken']}
+        for s in user_languages
+        if user_languages[s]['room_id'] == room_id
+    ]
+
     room_occupancy.setdefault(room_id, set()).add(sid)
     user_languages[sid] = {'spoken': spoken_lang, 'listen': listen_lang, 'room_id': room_id}
     join_room(room_id)
@@ -174,6 +185,7 @@ def handle_join_call(data):
         'room_id': room_id,
         'sid': sid,
         'room_size': len(room_occupancy[room_id]),
+        'participants': existing,
     })
 
 
@@ -224,9 +236,10 @@ def handle_audio(data):
 
     audio_buffers.setdefault(sid, bytearray()).extend(audio_bytes)
 
-    # Run interim transcription every ~3 chunks once buffer is large enough
+    # Run interim transcription on every chunk once buffer is large enough.
+    # Faster-Whisper handles short audio well, so this gives a near real-time feel.
     chunk_index = data.get('chunk_index', 0)
-    if chunk_index > 0 and chunk_index % 3 == 0 and len(audio_buffers[sid]) > 50000:
+    if chunk_index > 0 and len(audio_buffers[sid]) > 30000:
         sender_lang = user_languages[sid]['spoken']
         room_id = user_languages[sid]['room_id']
         try:
@@ -272,21 +285,51 @@ def handle_stop_streaming(data=None):
 
     emit('transcription_update', {'text': text, 'is_final': True, 'from': sid}, room=sid)
 
-    for target_sid in get_other_sids(sid, room_id):
-        target_lang = user_languages[target_sid]['listen']
+    # Broadcast a single shared message to ALL users in the room (including sender),
+    # each customised to their listening language. This way both tabs see the
+    # same conversation but in their own preferred language.
+    _broadcast_message(sid, room_id, text, sender_lang, with_audio=True)
+
+
+def _broadcast_message(sender_sid, room_id, text, sender_lang, with_audio=False):
+    """Send one 'message' event per user in the room, translated to their listen language."""
+    import time as _time
+    message_id = f"{sender_sid}-{int(_time.time() * 1000)}"
+    room_sids = list(room_occupancy.get(room_id, set()))
+
+    for user_sid in room_sids:
+        if user_sid not in user_languages:
+            continue
+
+        viewer_lang = user_languages[user_sid]['listen']
+        is_self = user_sid == sender_sid
+
         try:
-            translated_text = translate_for_target(text, sender_lang, target_lang)
-            audio_b64 = speak_text(translated_text, lang=target_lang)
-            emit('translated_audio', {
-                'audio': audio_b64,
+            # The viewer's translated version of the message
+            translated = text if is_self or sender_lang == viewer_lang \
+                else translate_for_target(text, sender_lang, viewer_lang)
+
+            # Generate audio for non-senders only (they're the ones who need to hear it)
+            audio_b64 = None
+            if with_audio and not is_self:
+                try:
+                    audio_b64 = speak_text(translated, lang=viewer_lang)
+                except Exception as e:
+                    logger.error(f"TTS failed for {user_sid}: {e}")
+
+            emit('message', {
+                'id': message_id,
+                'from_sid': sender_sid,
+                'is_self': is_self,
                 'original_text': text,
-                'translated_text': translated_text,
-                'from': sid,
-                'to_lang': target_lang,
-            }, room=target_sid)
+                'original_lang': sender_lang,
+                'translated_text': translated,
+                'translated_lang': viewer_lang,
+                'audio': audio_b64,
+            }, room=user_sid)
         except Exception as e:
-            logger.error(f"Translation/TTS error for {target_sid}: {e}")
-            emit('error', {'message': f"Translation error: {e}"}, room=target_sid)
+            logger.error(f"Broadcast error for {user_sid}: {e}")
+            emit('error', {'message': f"Translation error: {e}"}, room=user_sid)
 
 
 @socketio.on('text_message')
@@ -302,20 +345,7 @@ def handle_text_message(data):
 
     sender_lang = user_languages[sid]['spoken']
     room_id = user_languages[sid]['room_id']
-
-    for target_sid in get_other_sids(sid, room_id):
-        target_lang = user_languages[target_sid]['listen']
-        try:
-            translated_text = translate_for_target(text, sender_lang, target_lang)
-            emit('translated_text', {
-                'original_text': text,
-                'translated_text': translated_text,
-                'from': sid,
-                'to_lang': target_lang,
-            }, room=target_sid)
-        except Exception as e:
-            logger.error(f"Text translation error: {e}")
-            emit('error', {'message': f"Translation error: {e}"}, room=target_sid)
+    _broadcast_message(sid, room_id, text, sender_lang, with_audio=False)
 
 
 if __name__ == '__main__':
