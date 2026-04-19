@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import { toast } from 'sonner'
 import socket from '../services/socket'
 
 const SocketContext = createContext()
@@ -17,23 +18,32 @@ export function SocketProvider({ children }) {
     socket.connect()
 
     socket.on('connect', () => setIsConnected(true))
-    socket.on('disconnect', () => setIsConnected(false))
+    socket.on('disconnect', () => {
+      setIsConnected(false)
+      toast.warning('Disconnected from server', { description: 'Trying to reconnect...' })
+    })
 
     socket.on('joined', (data) => {
       setCurrentRoom(data.room_id)
       setParticipants(data.participants || [])
       setError(null)
+      toast.success(`Joined room "${data.room_id}"`)
     })
 
     socket.on('user_joined', (data) => {
       setParticipants((prev) => {
         if (prev.some((p) => p.sid === data.sid)) return prev
+        toast.info('Someone joined the call')
         return [...prev, data]
       })
     })
 
     socket.on('user_left', (data) => {
-      setParticipants((prev) => prev.filter((p) => p.sid !== data.sid))
+      setParticipants((prev) => {
+        const left = prev.find((p) => p.sid === data.sid)
+        if (left) toast.info('Someone left the call')
+        return prev.filter((p) => p.sid !== data.sid)
+      })
     })
 
     // Live transcription updates - shows what's being said in real time.
@@ -89,7 +99,9 @@ export function SocketProvider({ children }) {
     })
 
     socket.on('error', (data) => {
-      setError(data.message || 'An error occurred')
+      const msg = data.message || 'An error occurred'
+      setError(msg)
+      toast.error(msg)
     })
 
     return () => {

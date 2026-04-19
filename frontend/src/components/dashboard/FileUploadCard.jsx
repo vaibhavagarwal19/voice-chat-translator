@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react'
+import { toast } from 'sonner'
 import { Upload, Volume2, FileAudio, ArrowRight, Sparkles, X } from 'lucide-react'
 import Card from '../ui/Card'
 import Select from '../ui/Select'
@@ -14,23 +15,22 @@ export default function FileUploadCard() {
   const [file, setFile] = useState(null)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
-  const [error, setError] = useState(null)
   const fileRef = useRef()
 
   const handleTranslate = async () => {
     if (!file) return
     setLoading(true)
-    setError(null)
     setResult(null)
+    const toastId = toast.loading('Translating audio...')
     try {
       const data = await translateAudioFile(file, srcLang, tgtLang)
       setResult(data)
-      // Auto-play the translated audio
+      toast.success('Translation complete', { id: toastId })
       if (data.translated_audio) {
         setTimeout(() => playBase64Audio(data.translated_audio), 200)
       }
     } catch (err) {
-      setError(err.message || 'Translation failed')
+      toast.error(err.message || 'Translation failed', { id: toastId })
     } finally {
       setLoading(false)
     }
@@ -39,7 +39,6 @@ export default function FileUploadCard() {
   const handleReset = () => {
     setFile(null)
     setResult(null)
-    setError(null)
     if (fileRef.current) fileRef.current.value = ''
   }
 
@@ -132,13 +131,6 @@ export default function FileUploadCard() {
               </>
             )}
           </button>
-
-          {/* Error message */}
-          {error && (
-            <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-xl px-4 py-3 text-sm">
-              {error}
-            </div>
-          )}
 
           {/* Results */}
           {result && (

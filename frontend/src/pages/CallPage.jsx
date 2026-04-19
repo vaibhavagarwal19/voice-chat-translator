@@ -1,5 +1,6 @@
 import { useEffect, useCallback, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { toast } from 'sonner'
 import { Phone, PhoneOff, Users, X, Languages } from 'lucide-react'
 import Badge from '../components/ui/Badge'
 import TranscriptionPanel from '../components/call/TranscriptionPanel'
@@ -27,7 +28,6 @@ export default function CallPage() {
     startStreaming,
     stopStreaming,
     sendAudioChunk,
-    error,
   } = useSocket()
   const { language } = useSettings()
   const { addCall, endCall, incrementMessages } = useCallHistory()
@@ -77,6 +77,11 @@ export default function CallPage() {
   const { isRecording, startRecording, stopRecording } =
     useAudioRecorder(onChunk, startStreaming, stopStreaming)
   const vad = useVAD(onSpeechStart, onSpeechEnd)
+
+  // Surface VAD errors as toast
+  useEffect(() => {
+    if (vad.error) toast.error(vad.error)
+  }, [vad.error])
 
   // Auto-play incoming translated audio
   useEffect(() => {
@@ -166,12 +171,6 @@ export default function CallPage() {
         </div>
       </div>
 
-      {error && (
-        <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 px-4 py-2 text-sm border-b border-red-200 dark:border-red-800">
-          {error}
-        </div>
-      )}
-
       {/* Main chat area */}
       <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 overflow-y-auto px-4 py-6">
@@ -218,6 +217,7 @@ export default function CallPage() {
       <ChatInputBar
         isRecording={isRecording}
         autoMode={autoMode}
+        vadLoading={vad.isLoading}
         onStartRecording={startRecording}
         onStopRecording={stopRecording}
         onToggleAuto={toggleAutoMode}

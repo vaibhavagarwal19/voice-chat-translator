@@ -5,6 +5,7 @@ import { useSocket } from '../../context/SocketContext'
 export default function ChatInputBar({
   isRecording,
   autoMode,
+  vadLoading,
   onStartRecording,
   onStopRecording,
   onToggleAuto,
@@ -32,14 +33,21 @@ export default function ChatInputBar({
         {/* Auto Mode toggle */}
         <button
           onClick={onToggleAuto}
+          disabled={vadLoading}
           title={autoMode ? 'Disable Auto Mode' : 'Enable Auto Mode (hands-free)'}
-          className={`p-2.5 rounded-full transition-all ${
+          className={`p-2.5 rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
             autoMode
               ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30'
               : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
           }`}
         >
-          {autoMode ? <Zap className="w-5 h-5" /> : <ZapOff className="w-5 h-5" />}
+          {vadLoading ? (
+            <span className="inline-block w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+          ) : autoMode ? (
+            <Zap className="w-5 h-5" />
+          ) : (
+            <ZapOff className="w-5 h-5" />
+          )}
         </button>
 
         {/* Text input */}

@@ -11,7 +11,7 @@ from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
 from transcriber import transcribe_chunk
-from translator import load_translation_model, translate_text
+from translator import load_translation_model, translate_text, get_cache_stats
 from tts import speak_text
 
 logging.basicConfig(
@@ -89,6 +89,12 @@ def cleanup_user(sid):
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({"status": "healthy"})
+
+
+@app.route('/cache_stats', methods=['GET'])
+def cache_stats():
+    """Returns translation cache hit rate. Useful for verifying the cache is working."""
+    return jsonify(get_cache_stats())
 
 
 @app.route('/translate_audio_file', methods=['POST'])

@@ -1,21 +1,18 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { MicVAD } from '@ricky0123/vad-web'
 import { float32ToWavBlob, blobToBase64 } from '../services/audioUtils'
 
 /**
  * Hook for Silero VAD (Voice Activity Detection).
- * Auto-detects speech start/end and provides the captured WAV audio as base64.
- *
- * @param onSpeechStart - called when user starts speaking
- * @param onSpeechEnd - called when user stops, receives base64-encoded WAV
+ * The @ricky0123/vad-web + onnxruntime-web bundle is ~500KB, so it's
+ * dynamically imported only when the user actually enables Auto Mode.
  */
 export function useVAD(onSpeechStart, onSpeechEnd) {
   const [isActive, setIsActive] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [error, setError] = useState(null)
+  const [isLoading, setIsLoading] = useState(false)
   const vadRef = useRef(null)
 
-  // Stable refs so the VAD instance always sees the latest callbacks
   const onStartRef = useRef(onSpeechStart)
   const onEndRef = useRef(onSpeechEnd)
   useEffect(() => { onStartRef.current = onSpeechStart }, [onSpeechStart])
@@ -24,8 +21,12 @@ export function useVAD(onSpeechStart, onSpeechEnd) {
   const start = useCallback(async () => {
     if (vadRef.current) return
     setError(null)
+    setIsLoading(true)
 
     try {
+      // Lazy-load the heavy VAD module (saves ~500KB from main bundle)
+      const { MicVAD } = await import('@ricky0123/vad-web')
+
       const vad = await MicVAD.new({
         onSpeechStart: () => {
           setIsSpeaking(true)
@@ -50,6 +51,8 @@ export function useVAD(onSpeechStart, onSpeechEnd) {
     } catch (err) {
       console.error('Failed to start VAD:', err)
       setError(err.message || 'Failed to start voice detection')
+    } finally {
+      setIsLoading(false)
     }
   }, [])
 
@@ -62,8 +65,7 @@ export function useVAD(onSpeechStart, onSpeechEnd) {
     setIsSpeaking(false)
   }, [])
 
-  // Cleanup on unmount
   useEffect(() => () => stop(), [stop])
 
-  return { isActive, isSpeaking, error, start, stop }
+  return { isActive, isSpeaking, isLoading, error, start, stop }
 }
