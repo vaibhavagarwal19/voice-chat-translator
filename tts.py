@@ -1,25 +1,24 @@
-from gtts import gTTS
 import base64
 import io
 
-# Map language codes to gTTS-compatible codes
+from gtts import gTTS
+
+# Map app language codes to gTTS-compatible codes
 TTS_LANGUAGE_MAP = {
     'zh': 'zh-cn',
-    'bn': 'bn',
-    'ur': 'ur',
 }
 
-SUPPORTED_TTS_LANGS = {'en', 'fr', 'es', 'de', 'it', 'pt', 'ru', 'zh', 'zh-cn', 'ar', 'nl', 'hi', 'ur', 'bn'}
+SUPPORTED_TTS_LANGS = {'en', 'fr', 'es', 'de', 'it', 'pt', 'ru', 'zh', 'ar', 'nl', 'hi', 'ur', 'bn'}
 
 
 def speak_text(text, lang='fr'):
+    """Generate base64-encoded MP3 from text using gTTS."""
     if lang not in SUPPORTED_TTS_LANGS:
         raise ValueError(f"Language '{lang}' not supported by gTTS")
 
-    # Map to gTTS-compatible code
     gtts_lang = TTS_LANGUAGE_MAP.get(lang, lang)
-
     tts = gTTS(text=text, lang=gtts_lang)
+
     buf = io.BytesIO()
     tts.write_to_fp(buf)
     buf.seek(0)

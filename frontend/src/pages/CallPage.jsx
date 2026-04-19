@@ -9,24 +9,40 @@ import TextChat from '../components/call/TextChat'
 import ParticipantList from '../components/call/ParticipantList'
 import { useSocket } from '../context/SocketContext'
 import { useAudioRecorder } from '../hooks/useAudioRecorder'
-import { useCallHistory } from '../hooks/useCallHistory'
 import { playBase64Audio } from '../services/audioUtils'
 import { useSettings } from '../context/SettingsContext'
 
 export default function CallPage() {
   const { roomId } = useParams()
   const navigate = useNavigate()
-  const { currentRoom, participants, messages, leaveCall, sendAudioChunk, error } = useSocket()
+  const {
+    participants,
+    messages,
+    liveTranscription,
+    speakingUsers,
+    leaveCall,
+    startStreaming,
+    stopStreaming,
+    sendAudioChunk,
+    error,
+  } = useSocket()
   const { spokenLanguage, listenLanguage } = useSettings()
-  const { addCall, endCall } = useCallHistory()
 
-  const onChunk = useCallback((base64) => {
-    sendAudioChunk(base64)
+  const onChunk = useCallback((base64, chunkIndex) => {
+    sendAudioChunk(base64, chunkIndex)
   }, [sendAudioChunk])
 
-  const { isRecording, startRecording, stopRecording } = useAudioRecorder(onChunk)
+  const onStart = useCallback(() => {
+    startStreaming()
+  }, [startStreaming])
 
-  // Auto-play incoming audio
+  const onStop = useCallback(() => {
+    stopStreaming()
+  }, [stopStreaming])
+
+  const { isRecording, startRecording, stopRecording } = useAudioRecorder(onChunk, onStart, onStop)
+
+  // Auto-play incoming translated audio
   useEffect(() => {
     const last = messages[messages.length - 1]
     if (last?.audio) {
@@ -54,12 +70,20 @@ export default function CallPage() {
             </p>
           </div>
         </div>
-        {isRecording && (
-          <Badge variant="red">
-            <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse mr-1.5 inline-block" />
-            Recording
-          </Badge>
-        )}
+        <div className="flex items-center gap-2">
+          {speakingUsers.size > 0 && (
+            <Badge variant="yellow">
+              <span className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse mr-1.5 inline-block" />
+              Someone speaking
+            </Badge>
+          )}
+          {isRecording && (
+            <Badge variant="red">
+              <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse mr-1.5 inline-block" />
+              Recording
+            </Badge>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -72,7 +96,11 @@ export default function CallPage() {
         <div className="lg:col-span-2 space-y-4">
           <Card>
             <h2 className="text-lg font-semibold mb-4">Conversation</h2>
-            <TranscriptionPanel messages={messages} />
+            <TranscriptionPanel
+              messages={messages}
+              liveTranscription={liveTranscription}
+              isRecording={isRecording}
+            />
           </Card>
 
           <Card>
@@ -89,7 +117,10 @@ export default function CallPage() {
 
         <div>
           <Card>
-            <ParticipantList participants={participants} />
+            <ParticipantList
+              participants={participants}
+              speakingUsers={speakingUsers}
+            />
           </Card>
         </div>
       </div>

@@ -9,6 +9,8 @@ export function SocketProvider({ children }) {
   const [participants, setParticipants] = useState([])
   const [messages, setMessages] = useState([])
   const [error, setError] = useState(null)
+  const [liveTranscription, setLiveTranscription] = useState(null) // interim text while speaking
+  const [speakingUsers, setSpeakingUsers] = useState(new Set())
 
   useEffect(() => {
     socket.connect()
@@ -30,21 +32,37 @@ export function SocketProvider({ children }) {
       setParticipants((prev) => prev.filter((p) => p.sid !== data.sid))
     })
 
-    socket.on('translated_text', (data) => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          type: 'text',
-          original: data.original_text,
-          translated: data.translated_text,
+    // Live transcription updates (interim and final from sender)
+    socket.on('transcription_update', (data) => {
+      if (data.is_final) {
+        // Final transcription — clear the live text
+        setLiveTranscription(null)
+        // Only add to messages if there's actual text (sender sees their own transcription)
+        if (data.text) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              type: 'transcription',
+              original: data.text,
+              translated: null,
+              from: data.from || 'self',
+              timestamp: new Date().toISOString(),
+            },
+          ])
+        }
+      } else {
+        // Interim — update live transcription display
+        setLiveTranscription({
+          text: data.text,
           from: data.from || 'other',
-          timestamp: new Date().toISOString(),
-        },
-      ])
+        })
+      }
     })
 
+    // Translated audio (final result for listener)
     socket.on('translated_audio', (data) => {
+      setLiveTranscription(null)
       setMessages((prev) => [
         ...prev,
         {
@@ -59,6 +77,33 @@ export function SocketProvider({ children }) {
       ])
     })
 
+    socket.on('translated_text', (data) => {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          type: 'text',
+          original: data.original_text,
+          translated: data.translated_text,
+          from: data.from || 'other',
+          timestamp: new Date().toISOString(),
+        },
+      ])
+    })
+
+    // Track who is currently speaking
+    socket.on('user_speaking', (data) => {
+      setSpeakingUsers((prev) => {
+        const next = new Set(prev)
+        if (data.speaking) {
+          next.add(data.sid)
+        } else {
+          next.delete(data.sid)
+        }
+        return next
+      })
+    })
+
     socket.on('error', (data) => {
       setError(data.message || 'An error occurred')
     })
@@ -69,8 +114,10 @@ export function SocketProvider({ children }) {
       socket.off('joined')
       socket.off('user_joined')
       socket.off('user_left')
+      socket.off('transcription_update')
       socket.off('translated_text')
       socket.off('translated_audio')
+      socket.off('user_speaking')
       socket.off('error')
       socket.disconnect()
     }
@@ -79,6 +126,7 @@ export function SocketProvider({ children }) {
   const joinCall = useCallback((roomId, spoken, listen) => {
     setMessages([])
     setError(null)
+    setLiveTranscription(null)
     socket.emit('join_call', { room_id: roomId, spoken, listen })
   }, [])
 
@@ -88,11 +136,20 @@ export function SocketProvider({ children }) {
       setCurrentRoom(null)
       setParticipants([])
       setMessages([])
+      setLiveTranscription(null)
     }
   }, [currentRoom])
 
-  const sendAudioChunk = useCallback((base64) => {
-    socket.emit('audio_chunk', { content: base64 })
+  const startStreaming = useCallback(() => {
+    socket.emit('start_streaming')
+  }, [])
+
+  const stopStreaming = useCallback(() => {
+    socket.emit('stop_streaming')
+  }, [])
+
+  const sendAudioChunk = useCallback((base64, chunkIndex) => {
+    socket.emit('audio_chunk', { content: base64, chunk_index: chunkIndex })
   }, [])
 
   const sendTextMessage = useCallback((text) => {
@@ -107,8 +164,12 @@ export function SocketProvider({ children }) {
         participants,
         messages,
         error,
+        liveTranscription,
+        speakingUsers,
         joinCall,
         leaveCall,
+        startStreaming,
+        stopStreaming,
         sendAudioChunk,
         sendTextMessage,
       }}
