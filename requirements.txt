@@ -2,6 +2,7 @@ Flask
 Flask-CORS
 Flask-SocketIO
 eventlet
+gunicorn
 gTTS
 numpy<2
 faster-whisper

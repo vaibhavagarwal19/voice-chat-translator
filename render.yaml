@@ -1,0 +1,40 @@
+# Render Blueprint - https://render.com/docs/blueprint-spec
+# Deploy with: connect this repo on Render and select "Blueprint" deploy.
+
+services:
+  # Backend: Flask + SocketIO + Faster-Whisper
+  - type: web
+    name: voice-translator-backend
+    runtime: python
+    plan: starter  # 512MB RAM. Use 'standard' (2GB) for the medium Whisper model.
+    buildCommand: |
+      apt-get update && apt-get install -y ffmpeg
+      pip install -r requirements.txt
+    startCommand: gunicorn --worker-class eventlet -w 1 app:app --bind 0.0.0.0:$PORT --timeout 120
+    envVars:
+      - key: WHISPER_MODEL_SIZE
+        value: tiny  # Small enough to fit in 512MB. Use 'base' (140MB) or 'small' (460MB) on larger plans.
+      - key: KMP_DUPLICATE_LIB_OK
+        value: "TRUE"
+      - key: ALLOWED_ORIGINS
+        value: "*"  # Tighten to your frontend URL after first deploy.
+      - key: FLASK_ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: "3.11"
+
+  # Frontend: React + Vite static site
+  - type: web
+    name: voice-translator-frontend
+    runtime: static
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: frontend/dist
+    envVars:
+      - key: VITE_BACKEND_URL
+        # Replace with your backend URL after first deploy
+        # e.g. https://voice-translator-backend.onrender.com
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

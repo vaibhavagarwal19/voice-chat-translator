@@ -176,6 +176,65 @@ End-to-end voice → translated audio latency is typically **2-3 seconds** (tran
 
 ---
 
+## Deployment (Render)
+
+This project includes a [`render.yaml`](render.yaml) Blueprint for one-click deployment to Render.
+
+### Steps
+
+1. **Push your code to GitHub** (Render needs a GitHub/GitLab repo).
+
+2. **Sign up at [render.com](https://render.com)** and click **New → Blueprint**.
+
+3. **Connect this repo**. Render will detect the `render.yaml` and create:
+   - A Python web service (the Flask-SocketIO backend)
+   - A static site (the React frontend)
+
+4. **Wait for the backend to deploy** (~5-10 min on first build — installs ffmpeg + Python deps + downloads Whisper model).
+
+5. **Note the backend URL** Render assigns you, e.g. `https://voice-translator-backend.onrender.com`.
+
+6. **Set `VITE_BACKEND_URL`** in the frontend service's environment variables to that URL, then trigger a redeploy.
+
+7. **Open your frontend URL** — done!
+
+### Memory considerations
+
+Render's free/starter tier gives you **512MB RAM**, which only fits the smaller Whisper models. The Blueprint defaults to `WHISPER_MODEL_SIZE=tiny` (75MB, fast but lower accuracy).
+
+| Plan | RAM | Recommended Whisper Model |
+|---|---|---|
+| Free / Starter | 512MB | `tiny` (75MB) |
+| Standard | 2GB | `base` (140MB) or `small` (460MB) |
+| Pro | 4GB+ | `medium` (1.5GB) |
+
+Change `WHISPER_MODEL_SIZE` in your service's environment variables to upgrade.
+
+### Cold starts
+
+Render's free tier spins down after 15 min of inactivity. The first request after spin-down takes ~30-60s while the model reloads. To avoid this, use a paid plan or ping `/health` periodically.
+
+### CORS
+
+After deploying, **tighten `ALLOWED_ORIGINS`** in the backend env vars from `*` to just your frontend URL:
+```
+ALLOWED_ORIGINS=https://voice-translator-frontend.onrender.com
+```
+
+### Environment variables reference
+
+**Backend:**
+- `WHISPER_MODEL_SIZE` — `tiny` / `base` / `small` / `medium`
+- `ALLOWED_ORIGINS` — comma-separated list of allowed frontend origins, or `*`
+- `PORT` — auto-set by Render
+- `KMP_DUPLICATE_LIB_OK` — `TRUE` (required for OpenMP compatibility)
+- `FLASK_ENV` — `production`
+
+**Frontend:**
+- `VITE_BACKEND_URL` — your deployed backend URL
+
+---
+
 ## Future Improvements
 
 - WebRTC for sub-second audio transport (replaces base64 over WebSocket)

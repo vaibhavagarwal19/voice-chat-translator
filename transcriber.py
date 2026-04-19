@@ -10,10 +10,13 @@ from faster_whisper import WhisperModel
 
 logger = logging.getLogger(__name__)
 
-# int8 quantization is 5x faster on CPU with comparable accuracy
+# Model size configurable via env var (tiny ~75MB, base ~140MB, small ~460MB,
+# medium ~1.5GB). Use smaller models for low-RAM deployments.
+WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "medium")
+
 try:
-    model = WhisperModel("medium", device="cpu", compute_type="int8")
-    logger.info("Faster-Whisper model 'medium' (int8) loaded successfully")
+    model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
+    logger.info(f"Faster-Whisper model '{WHISPER_MODEL_SIZE}' (int8) loaded successfully")
 except Exception as e:
     logger.error(f"Failed to load Faster-Whisper model: {e}")
     raise

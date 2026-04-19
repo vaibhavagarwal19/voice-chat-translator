@@ -20,12 +20,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Comma-separated list of allowed origins, e.g. "https://myapp.vercel.app,http://localhost:5173"
+# Use "*" to allow any origin (fine for dev, not recommended for production).
+ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "*")
+_origins = [o.strip() for o in ALLOWED_ORIGINS.split(",")] if ALLOWED_ORIGINS != "*" else "*"
+
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=_origins)
 
 socketio = SocketIO(
     app,
-    cors_allowed_origins="*",
+    cors_allowed_origins=_origins,
     ping_timeout=20000,
     ping_interval=10000,
 )
@@ -356,5 +361,7 @@ def handle_text_message(data):
 
 
 if __name__ == '__main__':
-    print("Starting Flask-SocketIO server on http://0.0.0.0:5000")
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True, use_reloader=False)
+    port = int(os.environ.get("PORT", 5000))
+    is_dev = os.environ.get("FLASK_ENV", "development") == "development"
+    print(f"Starting Flask-SocketIO server on http://0.0.0.0:{port}")
+    socketio.run(app, host='0.0.0.0', port=port, debug=is_dev, use_reloader=False)

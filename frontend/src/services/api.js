@@ -1,5 +1,7 @@
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || ''
+
 export async function checkHealth() {
-  const res = await fetch('/health')
+  const res = await fetch(`${BACKEND_URL}/health`)
   return res.json()
 }
 
@@ -9,7 +11,7 @@ export async function translateAudioFile(file, spokenLang, listenLang) {
   formData.append('spoken_language', spokenLang)
   formData.append('listening_language', listenLang)
 
-  const res = await fetch('/translate_audio_file', {
+  const res = await fetch(`${BACKEND_URL}/translate_audio_file`, {
     method: 'POST',
     body: formData,
   })
